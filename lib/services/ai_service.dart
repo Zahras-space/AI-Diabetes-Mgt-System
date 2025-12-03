@@ -53,7 +53,8 @@ class AIService {
 
 	// 2. Image analysis using Groq with Llama 3.2 Vision (11B)
 	Future<FoodAnalysis> analyzeFoodImage({required Uint8List imageBytes, required bool isCooked, required String cookingMethod, required String oilEstimate, required String portionHint}) async {
-		final apiKey =  "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"; // Change to groq API key
+		///////ADDD GROKK API///////////////
+    final apiKey =  ""; // Change to groq API key
 		if (apiKey.isEmpty) throw Exception('Missing GROQ_API_KEY');
 		final sw = Stopwatch()..start();
 		_log('analyzeFoodImage START isCooked=$isCooked cookingMethod=$cookingMethod oil=$oilEstimate portionHint=$portionHint imageBytes=${imageBytes.lengthInBytes}');
@@ -126,8 +127,9 @@ JSON schema example:
 	}
 
 	// 3. USDA lookup (unchanged)
+  ////////////////////////////////////////////////////////////////////////////////////////////
 	Future<NutritionFacts?> enrichWithUSDA(FoodAnalysis analysis) async {
-		final apiKey = "Tlj8JWi0vK9poZUWSqEw8TLhZaVEAmxckE2hhiDe";
+		final apiKey = "";
 		if (apiKey.isEmpty) throw Exception('Missing USDA_API_KEY');
 		final sw = Stopwatch()..start();
 		_log('USDA search START query="${analysis.foodName}"');
@@ -146,7 +148,7 @@ JSON schema example:
 		final fdcId = foods.first['fdcId'].toString();
 		_log('USDA detail START fdcId=$fdcId');
 
-		final detailUri = Uri.https('api.nal.usda.gov', '/fdc/v1/food/$fdcId', {'Tlj8JWi0vK9poZUWSqEw8TLhZaVEAmxckE2hhiDe': apiKey});
+		final detailUri = Uri.https('api.nal.usda.gov', '/fdc/v1/food/$fdcId', {'': apiKey}); ///////////////////USDA
 		final detailResp = await http.get(detailUri);
 		_log('USDA detail RESP status=${detailResp.statusCode} elapsedMs=${sw.elapsedMilliseconds}');
 		if (detailResp.statusCode != 200) return null;
@@ -299,7 +301,8 @@ JSON schema example:
 
 	// 5. Meal plan generation with Groq (Llama 3.1 8B)
 	Future<MealAndLifestylePlan> generateMealPlan({required UserProfile profile, required FoodAnalysis analysis, bool forceNew = false, String? preferences}) async {
-		final apiKey = "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";
+	///////////////////ADDD GROK APII////////////////////////////////////
+  	final apiKey = "";
 		if (apiKey.isEmpty) throw Exception('Missing GROQ_API_KEY');
 		final sw = Stopwatch()..start();
 		_log('mealPlan START food=${analysis.foodName} calories=${analysis.nutrition?.calories.toStringAsFixed(1)} risk=${analysis.glucoseRisk}');

@@ -11,12 +11,7 @@ import 'services/auth_service.dart';
 import 'services/user_service.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 
-// Use the GenerativeModel class from the package
-final model = GenerativeModel(
-  // Choose a model, e.g., gemini-2.5-flash for faster chat responses
-  model: 'gemini-2.5-flash', 
-  apiKey: 'AIzaSyASl8VzVCz-zYoUoMaN-si4cvR4pKmuw98', // **Replace with your actual key**
-);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -30,11 +25,6 @@ void main() async {
     print("Error loading .env file: $e"); // Check your console for this
   }
 
-  Gemini.init(
-    apiKey: '', // Replace with your actual key
-    // You can optionally enable debug mode
-    enableDebugging: true,
-  );
   runApp(const MyApp());
 }
 

@@ -5,8 +5,7 @@
 // (Never commit .env)  Add to .gitignore:  .env
 
 
-class ApiKeysWeb {
-  static const gemini = "AIzaSyASl8VzVCz-zYoUoMaN-si4cvR4pKmuw98";
-  static const usda = "Tlj8JWi0vK9poZUWSqEw8TLhZaVEAmxckE2hhiDe";
-  static const groq = "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"; // ADD THIS
-}
+// class ApiKeysWeb {
+//   static const gemini = "";
+//   //static const usda = "";
+// }
