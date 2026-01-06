@@ -1,11 +1,11 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image_picker/image_picker.dart';
-import 'package:tflite_flutter/tflite_flutter.dart'; // Professional Package
-import 'package:image/image.dart' as img; // For resizing images
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:image/image.dart' as img;
 import 'package:csv/csv.dart';
+
 class FoodScannerScreen extends StatefulWidget {
   const FoodScannerScreen({super.key});
 
@@ -17,6 +17,7 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
   // CONFIGURATION
   final Color primaryColor = const Color(0xFF2196F3);
   final ImagePicker _picker = ImagePicker();
+  final double confidenceThreshold = 0.50; // 50% threshold
 
   // AI VARIABLES
   Interpreter? _interpreter;
@@ -30,6 +31,8 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
   // RESULTS
   String _foodName = "";
   String _confidence = "";
+  double _confidenceValue = 0.0; // Store raw confidence value
+  bool _isLowConfidence = false; // Track if confidence is low
   final Map<String, Map<String, dynamic>> _nutritionDb = {};
   Map<String, dynamic> _currentNutrition = {};
 
@@ -52,28 +55,22 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
     setState(() => _loading = false);
   }
 
-  // 1. LOAD MODEL (tflite_flutter style)
   Future<void> _loadModel() async {
     try {
-      // Load the Brain
       _interpreter = await Interpreter.fromAsset('assets/model/food_classifier.tflite');
-
-      // Load the Labels
       final labelData = await rootBundle.loadString('assets/model/labels.txt');
       _labels = labelData.split('\n').where((s) => s.isNotEmpty).toList();
-
-      // Configure Model Input/Output shapes
       _interpreter?.allocateTensors();
-
       setState(() => _isModelLoaded = true);
       print("✅ TFLite Model Loaded Successfully");
     } catch (e) {
       print("❌ Failed to load model: $e");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Model Error: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Model Error: $e"))
+      );
     }
   }
 
-  // 2. LOAD NUTRITION DATABASE
   Future<void> _loadNutritionCSV() async {
     try {
       final rawData = await rootBundle.loadString("assets/model/nutrition.csv");
@@ -81,7 +78,6 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
 
       for (var row in csvTable) {
         if (row.length > 1) {
-          // Cleanup name for matching (apple_pie -> apple_pie)
           String key = row[0].toString().trim().toLowerCase().replaceAll(" ", "_");
           _nutritionDb[key] = {
             'calories': row[1],
@@ -96,7 +92,6 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
     }
   }
 
-  // 3. PICK IMAGE
   Future<void> _pickImage(ImageSource source) async {
     try {
       final XFile? image = await _picker.pickImage(
@@ -111,9 +106,9 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
         _selectedImage = File(image.path);
         _loading = true;
         _foodName = "";
+        _isLowConfidence = false; // Reset flag
       });
 
-      // Analyze immediately
       await Future.delayed(const Duration(milliseconds: 100));
       await _runInference(File(image.path));
 
@@ -122,12 +117,10 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
     }
   }
 
-  // 4. RUN AI (Manual Preprocessing)
   Future<void> _runInference(File imageFile) async {
     if (!_isModelLoaded || _interpreter == null) return;
 
     try {
-      // A. Read Image
       final imageData = await imageFile.readAsBytes();
       final img.Image? decodedImage = img.decodeImage(imageData);
 
@@ -135,32 +128,24 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
         throw Exception("Could not decode image");
       }
 
-      // B. Resize to 224x224 (The size MobileNet expects)
       final img.Image resizedImage = img.copyResize(decodedImage, width: 224, height: 224);
 
-      // C. Convert to Float32 List [1, 224, 224, 3] and Normalize (0-1)
-      // Your training used rescale=1./255, so we divide pixel values by 255.0
       var input = List.generate(1, (i) =>
           List.generate(224, (y) =>
               List.generate(224, (x) {
                 var pixel = resizedImage.getPixel(x, y);
                 return [
-                  pixel.r / 255.0, // Red
-                  pixel.g / 255.0, // Green
-                  pixel.b / 255.0  // Blue
+                  pixel.r / 255.0,
+                  pixel.g / 255.0,
+                  pixel.b / 255.0
                 ];
               })
           )
       );
 
-      // D. Prepare Output Buffer [1, 101]
-      // 101 is the number of food classes
       var output = List.filled(1 * 101, 0.0).reshape([1, 101]);
-
-      // E. Run Inference
       _interpreter!.run(input, output);
 
-      // F. Find the Winner (Highest Confidence)
       List<double> probabilities = List<double>.from(output[0]);
       double maxScore = 0.0;
       int maxIndex = 0;
@@ -172,10 +157,20 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
         }
       }
 
-      // G. Process Result
-      String rawLabel = _labels.length > maxIndex ? _labels[maxIndex] : "Unknown";
+      // Check if confidence is below threshold
+      if (maxScore < confidenceThreshold) {
+        setState(() {
+          _isLowConfidence = true;
+          _confidenceValue = maxScore;
+          _confidence = "${(maxScore * 100).toStringAsFixed(0)}%";
+          _foodName = "Not Recognized";
+          _currentNutrition = {};
+          _loading = false;
+        });
+        return;
+      }
 
-      // TFLite labels sometimes have numbers (e.g. "0 apple_pie"). Clean them.
+      String rawLabel = _labels.length > maxIndex ? _labels[maxIndex] : "Unknown";
       String cleanKey = rawLabel.replaceAll(RegExp(r'[0-9]'), '').trim().toLowerCase().replaceAll(" ", "_");
       String displayName = rawLabel.replaceAll(RegExp(r'[0-9]'), '').trim().replaceAll("_", " ").toUpperCase();
 
@@ -186,7 +181,9 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
       setState(() {
         _foodName = displayName;
         _confidence = "${(maxScore * 100).toStringAsFixed(0)}%";
+        _confidenceValue = maxScore;
         _currentNutrition = nutrition;
+        _isLowConfidence = false;
         _loading = false;
       });
 
@@ -225,6 +222,8 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
             const SizedBox(height: 30),
             if (_loading)
               const Center(child: CircularProgressIndicator())
+            else if (_isLowConfidence)
+              _buildNotFoodCard()
             else if (_foodName.isNotEmpty)
               _buildResultCard(),
           ],
@@ -270,6 +269,106 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
         padding: const EdgeInsets.symmetric(vertical: 15),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         elevation: 2,
+      ),
+    );
+  }
+
+  // NEW: Widget for non-food or low confidence results
+  Widget _buildNotFoodCard() {
+    return Container(
+      padding: const EdgeInsets.all(25),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.red.withOpacity(0.3), width: 2),
+        boxShadow: [
+          BoxShadow(color: Colors.red.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 5))
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.red.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.restaurant_menu,
+              size: 60,
+              color: Colors.red,
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            "Not a Food Item",
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            "Confidence: $_confidence",
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: Colors.orange[50],
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, color: Colors.orange, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    "The image doesn't appear to be food or couldn't be recognized with confidence. Please try again with a clearer food image.",
+                    style: TextStyle(
+                      color: Colors.orange[900],
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 15),
+          const Text(
+            "Tips:",
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _buildTipItem("Ensure good lighting"),
+          _buildTipItem("Get closer to the food"),
+          _buildTipItem("Make sure the food is clearly visible"),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTipItem(String tip) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle, size: 18, color: Colors.green),
+          const SizedBox(width: 8),
+          Text(
+            tip,
+            style: TextStyle(color: Colors.grey[700], fontSize: 14),
+          ),
+        ],
       ),
     );
   }
@@ -336,7 +435,7 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
 
   Widget _buildNutrientTile(IconData icon, String label, String value, Color color) {
     return Container(
-      width: (MediaQuery.of(context).size.width / 2) - 30, // 2 columns
+      width: (MediaQuery.of(context).size.width / 2) - 30,
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -351,8 +450,6 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
             child: Icon(icon, color: color, size: 24),
           ),
           const SizedBox(width: 12),
-
-          // --- FIX: Wrap Column in Expanded ---
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -360,19 +457,18 @@ class _FoodScannerScreenState extends State<FoodScannerScreen> {
                 Text(
                   label,
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  overflow: TextOverflow.ellipsis, // Safety: Add dots if too long
+                  overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
                 Text(
                   value,
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  overflow: TextOverflow.ellipsis, // Safety: Add dots if too long
+                  overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
               ],
             ),
           ),
-          // ------------------------------------
         ],
       ),
     );
